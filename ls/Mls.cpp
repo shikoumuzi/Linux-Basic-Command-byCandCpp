@@ -11,7 +11,9 @@
 #include<glob.h>
 #include<fstream>
 #include<iomanip>
-
+#include<time.h>
+#include<crypt.h>
+#include<pwd.h>
 void Hook(void)
 {
 	//钩子函数 用atexit钩上 会在程序结束时被调用，在这里相当于c++的析构函数
@@ -46,6 +48,39 @@ void GlobCheck(int checknumber)
 		throw std::string("unkown error");
 		break;
 	}
+}
+
+
+static char*getmode(struct stat& file)
+{
+	static char mode[12];
+	mode[11] = '\0';
+	
+	switch(file.st_mode & S_IFMT)
+	{
+	case S_IFBLK:  mode[0] = 'b';      break;
+        case S_IFCHR:  mode[0] = 'c';      break;
+        case S_IFDIR:  mode[0] = 'd';      break;
+        case S_IFIFO:  mode[0] = 'i';      break;
+        case S_IFLNK:  mode[0] = 'L';      break;
+        case S_IFREG:  mode[0] = 'r';      break;
+        case S_IFSOCK: mode[0] = 's';      break;
+        default:       mode[0] = '-';      break;
+
+	}
+	
+	struct stat& s_buff = file;
+	mode[1] = (s_buff.st_mode & S_IRUSR)?'r':'-';
+	mode[2] = (s_buff.st_mode & S_IWUSR)?'w':'-';
+	mode[3] = (s_buff.st_mode & S_IXUSR)?'x':'-';
+	mode[4] = (s_buff.st_mode & S_IRGRP)?'r':'-';
+	mode[5] = (s_buff.st_mode & S_IWGRP)?'w':'-';
+	mode[6] = (s_buff.st_mode & S_IXGRP)?'x':'-';
+	mode[7] = (s_buff.st_mode & S_IROTH)?'r':'-';
+	mode[8] = (s_buff.st_mode & S_IWOTH)?'w':'-';
+	mode[9] = (s_buff.st_mode & S_IXOTH)?'x':'-';
+	mode[10] = '\0';
+	return mode;
 }
 
 void all(const char* path)
@@ -101,38 +136,101 @@ void list(const char* path, bool node = false)
 	char *p = nullptr;
 	for(size_t i = 0; i < globdir.gl_pathc; ++i)
 	{
-		if(node == false)
-		{
-			size_t len = strlen(globdir.gl_pathv[i]);
-			p = (char*)malloc((len - 2) * sizeof(char));
-									
-			strncpy(p, globdir.gl_pathv[i] + 2 , len - 2);
 		
-			if(lstat(globdir.gl_pathv[i],&FileNoDir) >= 0)
-			{
+	
+		size_t len = strlen(globdir.gl_pathv[i]);
+		p = (char*)malloc((len - 2) * sizeof(char));
+								
+		strncpy(p, globdir.gl_pathv[i] + 2 , len - 2);
+	
+		if(lstat(globdir.gl_pathv[i],&FileNoDir) >= 0)
+		{
+			//这里是时间处理字段
+			struct tm* atime, *ctime;
+			atime = localtime(&(FileNoDir.st_atime));
+			
+			//必须要先声明足够容量的字符串倒入localtime才行
+			char *atimestr = (char*)malloc(sizeof(char) * 50);
+			//如果是-y的话 原生是从1900年开始计算的数字
+			//-Y则是标准时间
+			strftime(atimestr, 50, "%Y年%m月%d日%H时%M分%S秒", atime);
+
+			char *ctimestr = (char*)malloc(sizeof(char) * 50);
+			
+			ctime = localtime(&(FileNoDir.st_ctime));
+			strftime(ctimestr, 50 , "%Y年%m月%d日%H时%M分%S秒", ctime);
+			
+			//这里是用户信息处理字段
+			struct passwd *user;
+			user = getpwuid(FileNoDir.st_uid);
+			//这里是通过uid来获取内容信息
+			// struct passwd {
+			//	       char   *pw_name;       /* username */
+			//	       char   *pw_passwd;     /* user password */
+			//	       uid_t   pw_uid;        /* user ID */
+			//	       gid_t   pw_gid;        /* group ID */
+			//	       char   *pw_gecos;      /* user information */
+			//	       char   *pw_dir;        /* home directory */
+			//	       char   *pw_shell;      /* shell program */
+			//	   };
+
+			//在这其中的passwd是加密过后的密码，
+			//如果要判断密码是否正确需要用密码和私钥相或运算看是否与加密后的杂串相等
+			
+			char *mode = getmode(FileNoDir);
+			std::cout 
+				<< std::setw(14)
+			       	<< std::setiosflags(std::ios::left)
+				<< mode;
+			
 				
-				std::cout << std::setiosflags(std::ios::left) 
+			if(node)	
+			{
+				std::cout  
 					//设置输出左对齐
 					<< std::setw(8)
-				       	<< FileNoDir.st_gid << " " 
+					<< FileNoDir.st_gid << " " 
 					<< std::setw(8)
-					<< FileNoDir.st_uid << " "
-					<< std::setw(8)
-					<< FileNoDir.st_size << " "
-					<< std::setw(8)			
-					<< FileNoDir.st_blocks << " "
-					<< std::setw(20)
-					<< p 
-					<< std::endl;
+					<< FileNoDir.st_uid << " ";
 			}
 			else
 			{
-				std::cout<< globdir.gl_pathv[i] << " 打开失败" << std::endl;
+				std::cout  
+					//设置输出左对齐
+					<< std::setw(8)
+					<< user->pw_name << " " 
+					<< std::setw(8)
+					<< user->pw_name << " ";
 			}
-			free(p);
-			p = nullptr;
-
+				
+				std::cout
+					<< std::setw(8)
+					<< FileNoDir.st_size << " "
+					<< std::setw(4)			
+					<< FileNoDir.st_blocks << " "
+					<< std::setw(30)
+					<< atimestr  << " "
+					<< std::setw(30)
+					<< ctimestr << " "
+					<< std::setw(20)
+					<< p 
+					<< std::endl;
+				
+			
+			free(atimestr);
+			atimestr = nullptr;
+			free(ctimestr);
+			ctimestr = nullptr;
+			
 		}
+		else
+		{
+			std::cout<< globdir.gl_pathv[i] << " 打开失败" << std::endl;
+		}
+		free(p);
+		p = nullptr;
+
+	
 		
 	}
 	
@@ -146,7 +244,7 @@ int main(int argc, char* argv[])
 	while(1)
 	{
 
-		int opt = getopt(argc, argv, "-alrtAFR");
+		int opt = getopt(argc, argv, "-alrtAFRn");
 		
 		//当读取完全部的命令时，getopt()会返回-1，这里用<0来表示循环终点
 		if(opt < 0)
@@ -171,6 +269,9 @@ int main(int argc, char* argv[])
 		case 'F':
 			break;
 		case 'R':
+			break;
+		case 'n':
+			list(argv[optind], true);
 			break;
 		default:
 			//当查找不到时，getopt会返回‘?’
