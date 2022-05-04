@@ -8,6 +8,27 @@
 #include<sys/stat.h>
 #include<unistd.h>
 #include<glob.h>
+#include<iterator>
+
+//如果一个变量在递归点之前或者之后使用， 完全可以放在静态区使用， 以减少创建变量的过程和耗时
+
+static bool path_noloop(const std::string& pathname)
+{
+	//用以检验文件夹路径/后面的. 
+	//当为..时为父节点的内容，进而会造成循环递归
+	size_t index = 0;
+	if((index = pathname.rfind('/')) != pathname.npos)
+	{
+		std::string temp = pathname.substr(index);		
+		if(temp == "/." || temp == "/..")
+		{
+			return false;
+		}
+		return true;
+	}
+	exit(1);
+}
+
 
 static int64_t  Mdu(const char *pathname)
 {
@@ -23,7 +44,7 @@ static int64_t  Mdu(const char *pathname)
 	
 	if(!S_ISDIR(statres.st_mode))
 	{
-		return statres.st_blocks/2;
+		return statres.st_blocks;
 	}
 	//path为目录文件
 	std::string nextpath(pathname);
@@ -44,13 +65,25 @@ static int64_t  Mdu(const char *pathname)
 	nextpath += "/.*";//所有隐藏文件
 	glob(nextpath.c_str(), GLOB_APPEND, NULL, &globres);
 	//GLOB——APPEND追加
-	
+	//是要在前面已经创建过了的情况下才能追加
+		
 	int64_t  sum =0;
+	//通过递归将叶子节点获取
 	for(int i = 0; i < globres.gl_pathc; ++i)//pathc类似于argc
-		sum += Mdu(globres.gl_pathv[i]);//pathv类似于arg
+	{	if(path_noloop(globres.gl_pathv[i]))
+			{
+				sum += Mdu(globres.gl_pathv[i]);//pathv类似于arg
+			}
+	}
 
-	return sum/2;
+	sum += statres.st_blocks;
+	//加上自身的blocks数目
+
+
+	globfree(&globres);
+	return sum;
 	//block的值是大小的两倍
+	
 }
 
 int main(int argc, char*argv[])
@@ -62,7 +95,8 @@ int main(int argc, char*argv[])
 	}
 	for(int i = 1; i < argc; ++i)
 	{
-		std::cout<<argv[i] <<" is "<<Mdu(argv[i]) <<std:: endl;
+		//block的值是大小的两倍
+		std::cout<<argv[i] <<" is "<<Mdu(argv[i]) / 2 <<std:: endl;
 	}
 	exit(0);
 }
